@@ -1,26 +1,240 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
+
+/* Financial Doctor Brand Colors */
+/* Vibrant Magenta: #CE30F9 - Primary */
+/* Deep Purple: #56138A - Secondary */
+/* Navy Blue: #20203F - Dark backgrounds */
+/* Soft Blue: #4A90E2 - Info, charts */
+/* Mint Green: #00D9A3 - Success */
+/* Warm Peach: #FFB088 - Warning */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Brand Colors */
+  --color-brand-magenta: #CE30F9;
+  --color-brand-purple: #56138A;
+  --color-brand-navy: #20203F;
+  --color-brand-blue: #4A90E2;
+  --color-brand-mint: #00D9A3;
+  --color-brand-peach: #FFB088;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  --radius: 0.625rem;
+
+  /* Light Mode - Financial Doctor Theme */
+  --background: #FAFBFC;
+  --foreground: #20203F;
+
+  --card: #FFFFFF;
+  --card-foreground: #20203F;
+
+  --popover: #FFFFFF;
+  --popover-foreground: #20203F;
+
+  /* Primary - Vibrant Magenta */
+  --primary: #CE30F9;
+  --primary-foreground: #FFFFFF;
+
+  /* Secondary - Deep Purple */
+  --secondary: #F3E8FF;
+  --secondary-foreground: #56138A;
+
+  --muted: #F1F5F9;
+  --muted-foreground: #64748B;
+
+  --accent: #F3E8FF;
+  --accent-foreground: #56138A;
+
+  --destructive: #EF4444;
+
+  --border: #E2E8F0;
+  --input: #E2E8F0;
+  --ring: #CE30F9;
+
+  /* Chart Colors - Brand Palette */
+  --chart-1: #CE30F9; /* Vibrant Magenta */
+  --chart-2: #56138A; /* Deep Purple */
+  --chart-3: #4A90E2; /* Soft Blue */
+  --chart-4: #00D9A3; /* Mint Green */
+  --chart-5: #FFB088; /* Warm Peach */
+
+  /* Sidebar - Clean white with brand accents */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #20203F;
+  --sidebar-primary: #CE30F9;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F3E8FF;
+  --sidebar-accent-foreground: #56138A;
+  --sidebar-border: #E2E8F0;
+  --sidebar-ring: #CE30F9;
+}
+
+.dark {
+  /* Dark Mode - Navy Blue based */
+  --background: #20203F;
+  --foreground: #F8FAFC;
+
+  --card: #2D2D52;
+  --card-foreground: #F8FAFC;
+
+  --popover: #2D2D52;
+  --popover-foreground: #F8FAFC;
+
+  /* Primary - Vibrant Magenta */
+  --primary: #CE30F9;
+  --primary-foreground: #FFFFFF;
+
+  /* Secondary - Deep Purple lighter */
+  --secondary: #3D3D66;
+  --secondary-foreground: #E9D5FF;
+
+  --muted: #3D3D66;
+  --muted-foreground: #94A3B8;
+
+  --accent: #3D3D66;
+  --accent-foreground: #E9D5FF;
+
+  --destructive: #F87171;
+
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.15);
+  --ring: #CE30F9;
+
+  /* Chart Colors - Brand Palette (brighter for dark mode) */
+  --chart-1: #D946EF; /* Lighter Magenta */
+  --chart-2: #A855F7; /* Lighter Purple */
+  --chart-3: #60A5FA; /* Lighter Blue */
+  --chart-4: #34D399; /* Lighter Mint */
+  --chart-5: #FDBA74; /* Lighter Peach */
+
+  /* Sidebar - Dark Navy */
+  --sidebar: #2D2D52;
+  --sidebar-foreground: #F8FAFC;
+  --sidebar-primary: #CE30F9;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #3D3D66;
+  --sidebar-accent-foreground: #E9D5FF;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #CE30F9;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Custom utility classes for brand colors */
+@layer utilities {
+  .bg-brand-gradient {
+    background: linear-gradient(135deg, #CE30F9 0%, #56138A 100%);
+  }
+
+  .bg-brand-gradient-soft {
+    background: linear-gradient(135deg, rgba(206, 48, 249, 0.1) 0%, rgba(86, 19, 138, 0.1) 100%);
+  }
+
+  .text-brand-gradient {
+    background: linear-gradient(135deg, #CE30F9 0%, #56138A 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .border-brand-gradient {
+    border-image: linear-gradient(135deg, #CE30F9 0%, #56138A 100%) 1;
+  }
+
+  .shadow-brand {
+    box-shadow: 0 4px 14px 0 rgba(206, 48, 249, 0.25);
+  }
+
+  .shadow-brand-sm {
+    box-shadow: 0 2px 8px 0 rgba(206, 48, 249, 0.15);
+  }
+
+  /* Welcome Animation Classes */
+  .animate-wave-motion {
+    animation: waveMotion 2s ease-in-out infinite;
+  }
+
+  .animate-loading-bar {
+    animation: loadingBar 2s ease-out forwards;
+  }
+}
+
+/* Welcome Animation Keyframes */
+@keyframes waveMotion {
+  0% {
+    transform: translateX(-5px) skewX(-1deg);
+  }
+  25% {
+    transform: translateX(3px) skewX(0.5deg);
+  }
+  50% {
+    transform: translateX(-3px) skewX(-0.5deg);
+  }
+  75% {
+    transform: translateX(5px) skewX(1deg);
+  }
+  100% {
+    transform: translateX(-5px) skewX(-1deg);
+  }
+}
+
+@keyframes loadingBar {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
 }
