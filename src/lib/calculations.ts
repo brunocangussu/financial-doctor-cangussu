@@ -207,51 +207,40 @@ export function calculateAppointment(input: CalculationInput): CalculationResult
   let finalValueProfessional = 0
   let professionalShare = 0
 
-  // Use configurable bonus rules if available
+  const isEndolaser = procedure.name.toLowerCase().includes('endolaser')
+  const isValquiria = professional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+
+  // Step 4a: Calculate bonuses
   if (input.bonusRules && input.bonusRules.length > 0) {
-    // Use the new configurable bonus rules system
     const { totalBonus } = calculateBonusFromRules(
       grossValue,
       netValue,
-      netValue, // valueAfterCosts is same as netValue here
+      netValue,
       procedure.id,
       professional.id,
       input.bonusRules
     )
     vanessaBonus = totalBonus
-    finalValueBruno = netValue
   } else {
-    // Fallback to legacy hardcoded logic for backward compatibility
-    const isEndolaser = procedure.name.toLowerCase().includes('endolaser')
-    const isValquiria = professional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
-
-    if (isEndolaser) {
-      if (isValquiria) {
-        // Endolaser + Valquiria: 50/50 split (legacy)
-        professionalShare = 50
-        finalValueBruno = netValue * 0.5
-        finalValueProfessional = netValue * 0.5
-      } else {
-        // Endolaser + Bruno: Vanessa bonus (legacy - uses procedure config)
-        if (procedure.has_vanessa_bonus) {
-          const effectivePercentage = procedure.vanessa_bonus_percentage || vanessaBonusPercentage
-          vanessaBonus = netValue * (effectivePercentage / 100)
-        }
-        finalValueBruno = netValue
-      }
-    } else {
-      // Non-Endolaser procedures
-      if (isValquiria) {
-        // 100% to Valquiria (legacy)
-        professionalShare = 100
-        finalValueBruno = 0
-        finalValueProfessional = netValue
-      }
+    // Legacy bonus logic
+    if (isEndolaser && !isValquiria && procedure.has_vanessa_bonus) {
+      const effectivePercentage = procedure.vanessa_bonus_percentage || vanessaBonusPercentage
+      vanessaBonus = netValue * (effectivePercentage / 100)
     }
   }
 
-  // TODO: Also implement split_rules for configurable splits (50/50, 100% to professional, etc.)
-  // For now, split logic remains in the legacy code above
+  // Step 4b: Apply professional split logic (always, regardless of bonus source)
+  if (isEndolaser && isValquiria) {
+    professionalShare = 50
+    finalValueBruno = netValue * 0.5
+    finalValueProfessional = netValue * 0.5
+  } else if (isValquiria) {
+    professionalShare = 100
+    finalValueBruno = 0
+    finalValueProfessional = netValue
+  } else {
+    finalValueBruno = netValue
+  }
 
   return {
     grossValue,
@@ -337,9 +326,10 @@ export function calculateAppointmentMultiProcedure(input: MultiProcedureCalculat
   let finalValueProfessional = 0
   let professionalShare = 0
 
-  // Use configurable bonus rules if available
+  const isValquiria = professional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+
+  // Step 4a: Calculate bonuses
   if (input.bonusRules && input.bonusRules.length > 0) {
-    // Calculate bonus for each procedure and sum them up
     let totalBonus = 0
     for (const proc of procedures) {
       const { totalBonus: procBonus } = calculateBonusFromRules(
@@ -353,33 +343,24 @@ export function calculateAppointmentMultiProcedure(input: MultiProcedureCalculat
       totalBonus += procBonus
     }
     vanessaBonus = totalBonus
-    finalValueBruno = netValue
   } else {
-    // Fallback to legacy hardcoded logic
-    const isValquiria = professional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
-
-    if (hasEndolaser) {
-      if (isValquiria) {
-        // Endolaser + Valquiria: 50/50 split (legacy)
-        professionalShare = 50
-        finalValueBruno = netValue * 0.5
-        finalValueProfessional = netValue * 0.5
-      } else {
-        // Endolaser + Bruno: Vanessa bonus (legacy)
-        if (hasVanessaBonus) {
-          vanessaBonus = netValue * (effectiveVanessaPercentage / 100)
-        }
-        finalValueBruno = netValue
-      }
-    } else {
-      // Non-Endolaser procedures
-      if (isValquiria) {
-        // 100% to Valquiria (legacy)
-        professionalShare = 100
-        finalValueBruno = 0
-        finalValueProfessional = netValue
-      }
+    // Legacy bonus logic
+    if (hasEndolaser && !isValquiria && hasVanessaBonus) {
+      vanessaBonus = netValue * (effectiveVanessaPercentage / 100)
     }
+  }
+
+  // Step 4b: Apply professional split logic (always, regardless of bonus source)
+  if (hasEndolaser && isValquiria) {
+    professionalShare = 50
+    finalValueBruno = netValue * 0.5
+    finalValueProfessional = netValue * 0.5
+  } else if (isValquiria) {
+    professionalShare = 100
+    finalValueBruno = 0
+    finalValueProfessional = netValue
+  } else {
+    finalValueBruno = netValue
   }
 
   return {

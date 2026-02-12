@@ -875,7 +875,7 @@ export function AtendimentosTable() {
               </div>
 
               <div className="space-y-2">
-                <Label>Hospital</Label>
+                <Label>Equiparação hospitalar</Label>
                 <div className="flex items-center space-x-2 h-10">
                   <Switch
                     id="edit-hospital"

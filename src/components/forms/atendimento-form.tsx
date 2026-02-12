@@ -567,7 +567,7 @@ export function AtendimentoForm() {
               }}
             />
             <Label htmlFor="isHospital" className="cursor-pointer">
-              Hospital (sem imposto)
+              Equiparação hospitalar (sem imposto)
             </Label>
           </div>
 
@@ -679,7 +679,7 @@ export function AtendimentoForm() {
                 <>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">
-                      (-) Taxa Cartão ({calculation.cardFeePercentage.toFixed(2)}%)
+                      (-) {useManualNet && manualNetValue ? 'Taxas' : 'Taxa Cartão'} ({calculation.cardFeePercentage.toFixed(2)}%)
                       {useManualNet && manualNetValue && (
                         <Badge variant="outline" className="ml-2 text-xs">calculada</Badge>
                       )}
