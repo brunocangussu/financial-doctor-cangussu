@@ -41,9 +41,10 @@ import {
   useSystemSettings,
   usePatientNameSuggestions,
   useBonusRules,
+  useSplitRules,
 } from '@/lib/hooks'
-import { calculateAppointmentMultiProcedure, formatCurrency, type CalculationResult } from '@/lib/calculations'
-import type { Procedure, Professional, Source } from '@/types'
+import { calculateAppointmentMultiProcedure, calculateBonusFromRules, findApplicableSplitRule, applySplitDistribution, splitRuleSpecificity, determineOwnerProfessionalId, formatCurrency, type CalculationResult } from '@/lib/calculations'
+import type { Procedure, Professional, Source, SplitRule } from '@/types'
 
 export function AtendimentoForm() {
   const router = useRouter()
@@ -79,6 +80,7 @@ export function AtendimentoForm() {
   const { data: systemSettings } = useSystemSettings()
   const { suggestions: patientSuggestions } = usePatientNameSuggestions(patientName)
   const { data: bonusRules } = useBonusRules()
+  const { data: splitRules } = useSplitRules()
 
   // Get selected entities
   const selectedProfessional = professionals.find((p) => p.id === professionalId)
@@ -109,6 +111,15 @@ export function AtendimentoForm() {
   const vanessaBonusPercentage = parseFloat(
     systemSettings.find((s) => s.key === 'vanessa_bonus_percentage')?.value || '1.5'
   )
+
+  // Determine owner professional ID for correct split attribution
+  const ownerProfessionalId = useMemo(
+    () => determineOwnerProfessionalId(professionals, systemSettings),
+    [professionals, systemSettings]
+  )
+
+  // Dynamic owner name from database
+  const ownerName = professionals.find(p => p.id === ownerProfessionalId)?.name || 'Bruno'
 
   // Calculate preview when form changes
   useEffect(() => {
@@ -148,7 +159,9 @@ export function AtendimentoForm() {
         cardFeeRules,
         defaultTaxPercentage: isHospital ? 0 : defaultTaxPercentage,
         vanessaBonusPercentage,
-        bonusRules: bonusRules.filter(r => r.is_active), // Use configurable bonus rules
+        bonusRules: bonusRules.filter(r => r.is_active),
+        splitRules: splitRules.filter(r => r.is_active),
+        ownerProfessionalId,
       })
 
       // Se hospital com valor liquido informado manualmente (diferente do calculado)
@@ -183,30 +196,63 @@ export function AtendimentoForm() {
         let finalValueProfessional = 0
         let professionalShare = 0
 
-        const hasEndolaser = selectedProcedures.some((proc) =>
-          proc.name.toLowerCase().includes('endolaser')
-        )
-        const proceduresWithBonus = selectedProcedures.filter((proc) => proc.has_vanessa_bonus)
-        const hasVanessaBonus = proceduresWithBonus.length > 0
-        // Soma as porcentagens de todos os procedimentos com bonus
-        const effectiveVanessaPercentage = hasVanessaBonus
-          ? proceduresWithBonus.reduce((sum, p) => sum + (p.vanessa_bonus_percentage || vanessaBonusPercentage), 0)
-          : 0
-        const isValquiria = selectedProfessional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+        // Bonus: recalculate with manual net value
+        const activeBonusRules = bonusRules.filter(r => r.is_active)
+        if (activeBonusRules.length > 0) {
+          let totalBonus = 0
+          for (const proc of selectedProcedures) {
+            const { totalBonus: procBonus } = calculateBonusFromRules(
+              grossValueNum, effectiveManualNet, effectiveManualNet,
+              proc.id, selectedProfessional.id, activeBonusRules
+            )
+            totalBonus += procBonus
+          }
+          vanessaBonus = totalBonus
+        } else {
+          // Legacy bonus
+          const hasEndolaser = selectedProcedures.some((proc) => proc.name.toLowerCase().includes('endolaser'))
+          const proceduresWithBonus = selectedProcedures.filter((proc) => proc.has_vanessa_bonus)
+          const hasVanessaBonus = proceduresWithBonus.length > 0
+          const effectiveVanessaPercentage = hasVanessaBonus
+            ? proceduresWithBonus.reduce((sum, p) => sum + (p.vanessa_bonus_percentage || vanessaBonusPercentage), 0)
+            : 0
+          const isValquiria = selectedProfessional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+          if (hasEndolaser && !isValquiria && hasVanessaBonus) {
+            vanessaBonus = effectiveManualNet * (effectiveVanessaPercentage / 100)
+          }
+        }
 
-        if (hasEndolaser) {
-          if (isValquiria) {
+        // Split: use centralized functions
+        const activeSplitRules = splitRules.filter(r => r.is_active)
+        if (activeSplitRules.length > 0) {
+          // Find best rule across all procedures
+          let bestRule: SplitRule | null = null
+          let bestSpec = -1
+          for (const proc of selectedProcedures) {
+            const rule = findApplicableSplitRule(proc.id, selectedProfessional.id, activeSplitRules)
+            if (rule) {
+              const spec = splitRuleSpecificity(rule)
+              if (spec > bestSpec || (spec === bestSpec && rule.priority > (bestRule?.priority ?? -1))) {
+                bestRule = rule
+                bestSpec = spec
+              }
+            }
+          }
+          if (bestRule && ownerProfessionalId) {
+            const split = applySplitDistribution(effectiveManualNet, bestRule, ownerProfessionalId)
+            finalValueBruno = split.finalValueBruno
+            finalValueProfessional = split.finalValueProfessional
+            professionalShare = split.professionalShare
+          }
+        } else {
+          // Fallback legado
+          const hasEndolaser = selectedProcedures.some((proc) => proc.name.toLowerCase().includes('endolaser'))
+          const isValquiria = selectedProfessional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+          if (hasEndolaser && isValquiria) {
             professionalShare = 50
             finalValueBruno = effectiveManualNet * 0.5
             finalValueProfessional = effectiveManualNet * 0.5
-          } else {
-            if (hasVanessaBonus) {
-              vanessaBonus = effectiveManualNet * (effectiveVanessaPercentage / 100)
-            }
-            finalValueBruno = effectiveManualNet
-          }
-        } else {
-          if (isValquiria) {
+          } else if (isValquiria) {
             professionalShare = 100
             finalValueBruno = 0
             finalValueProfessional = effectiveManualNet
@@ -250,6 +296,9 @@ export function AtendimentoForm() {
     defaultTaxPercentage,
     vanessaBonusPercentage,
     isHospital,
+    bonusRules,
+    splitRules,
+    ownerProfessionalId,
   ])
 
   // Format currency input
@@ -745,7 +794,7 @@ export function AtendimentoForm() {
                 <>
                   <Separator />
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Valor Bruno</span>
+                    <span className="text-muted-foreground">Valor {ownerName}</span>
                     <span className="font-medium">
                       {formatCurrency(calculation.finalValueBruno)}
                     </span>

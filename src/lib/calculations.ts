@@ -17,7 +17,7 @@
  * - Memorial (Hospital): Usa valor liquido da NF direto
  */
 
-import type { CardFeeRule, Procedure, Professional, Source, BonusRule, SplitRule } from '@/types'
+import type { CardFeeRule, Procedure, Professional, Source, BonusRule, SplitRule, SystemSetting } from '@/types'
 
 export interface CalculationInput {
   grossValue: number
@@ -31,6 +31,7 @@ export interface CalculationInput {
   vanessaBonusPercentage: number // Fallback if no bonus rules
   bonusRules?: BonusRule[] // Configurable bonus rules from database
   splitRules?: SplitRule[] // Configurable split rules from database
+  ownerProfessionalId?: string // Owner professional ID for correct split attribution
 }
 
 export interface CalculationResult {
@@ -62,6 +63,26 @@ export interface MultiProcedureCalculationInput {
   vanessaBonusPercentage: number
   bonusRules?: BonusRule[] // Configurable bonus rules from database
   splitRules?: SplitRule[] // Configurable split rules from database
+  ownerProfessionalId?: string // Owner professional ID for correct split attribution
+}
+
+/**
+ * Determine the owner professional ID from system settings or professionals list
+ * The owner is the person whose share goes to finalValueBruno
+ */
+export function determineOwnerProfessionalId(
+  professionals: Professional[],
+  systemSettings?: SystemSetting[]
+): string | undefined {
+  // Check system setting first
+  const settingValue = systemSettings?.find(s => s.key === 'owner_professional_id')?.value
+  if (settingValue) return settingValue
+
+  // Heuristic fallback: owner is the professional whose name is NOT Valquíria
+  const owner = professionals.find(p =>
+    !p.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+  )
+  return owner?.id
 }
 
 /**
@@ -136,6 +157,86 @@ export function calculateBonusFromRules(
 }
 
 /**
+ * Calculate specificity of a split rule (reusable helper)
+ * Higher = more specific: procedure+professional(3) > procedure(2) > professional(1) > generic(0)
+ */
+export function splitRuleSpecificity(rule: SplitRule): number {
+  return (rule.procedure_id ? 2 : 0) + (rule.professional_id ? 1 : 0)
+}
+
+/**
+ * Find the best applicable split rule for a given procedure and professional
+ * Returns the most specific matching rule, or null if none match
+ */
+export function findApplicableSplitRule(
+  procedureId: string | null,
+  professionalId: string | null,
+  splitRules: SplitRule[]
+): SplitRule | null {
+  if (!splitRules || splitRules.length === 0) return null
+
+  const matching = splitRules
+    .filter((rule) => {
+      if (!rule.is_active) return false
+      const procedureMatches = !rule.procedure_id || rule.procedure_id === procedureId
+      const professionalMatches = !rule.professional_id || rule.professional_id === professionalId
+      return procedureMatches && professionalMatches
+    })
+    .sort((a, b) => {
+      const specDiff = splitRuleSpecificity(b) - splitRuleSpecificity(a)
+      if (specDiff !== 0) return specDiff
+      return b.priority - a.priority
+    })
+
+  return matching[0] ?? null
+}
+
+/**
+ * Apply split distribution from a rule
+ * Validates distributions and returns safe defaults (100% Bruno) for invalid rules
+ *
+ * IMPORTANT: Uses ownerProfessionalId to determine which share goes to finalValueBruno (owner)
+ * vs finalValueProfessional (non-owner). This correctly handles the case where
+ * the owner IS the appointment's professional (e.g., Bruno doing Endolaser Bruno).
+ */
+export function applySplitDistribution(
+  netValue: number,
+  rule: SplitRule,
+  ownerProfessionalId: string
+): { finalValueBruno: number; finalValueProfessional: number; professionalShare: number } {
+  const defaultResult = { finalValueBruno: netValue, finalValueProfessional: 0, professionalShare: 0 }
+
+  if (!rule.distributions || rule.distributions.length === 0) {
+    console.warn(`[applySplitDistribution] Rule "${rule.name}" has empty distributions, defaulting to 100% Bruno`)
+    return defaultResult
+  }
+
+  const totalPercentage = rule.distributions.reduce((sum, d) => sum + d.percentage, 0)
+  if (Math.abs(totalPercentage - 100) > 0.01) {
+    console.warn(`[applySplitDistribution] Rule "${rule.name}" distributions sum to ${totalPercentage}%, not 100%. Defaulting to 100% Bruno`)
+    return defaultResult
+  }
+
+  let finalValueBruno = 0
+  let finalValueProfessional = 0
+  let professionalShare = 0
+
+  for (const dist of rule.distributions) {
+    const share = netValue * (dist.percentage / 100)
+    if (dist.professional_id === ownerProfessionalId) {
+      // Owner's share → finalValueBruno
+      finalValueBruno += share
+    } else {
+      // Non-owner share → finalValueProfessional (payout)
+      finalValueProfessional += share
+      professionalShare += dist.percentage
+    }
+  }
+
+  return { finalValueBruno, finalValueProfessional, professionalShare }
+}
+
+/**
  * Find the applicable card fee percentage for a given payment method and value
  */
 export function findCardFeePercentage(
@@ -166,7 +267,6 @@ export function findCardFeePercentage(
 export function calculateAppointment(input: CalculationInput): CalculationResult {
   const {
     grossValue,
-    netValueInput,
     paymentMethodId,
     source,
     procedure,
@@ -230,17 +330,29 @@ export function calculateAppointment(input: CalculationInput): CalculationResult
   }
 
   // Step 4b: Apply professional split logic (always, regardless of bonus source)
-  if (isEndolaser && isValquiria) {
-    professionalShare = 50
-    finalValueBruno = netValue * 0.5
-    finalValueProfessional = netValue * 0.5
-  } else if (isValquiria) {
-    professionalShare = 100
-    finalValueBruno = 0
-    finalValueProfessional = netValue
-  } else {
-    finalValueBruno = netValue
+  if (input.splitRules && input.splitRules.length > 0 && input.ownerProfessionalId) {
+    // Database-driven split rules
+    const rule = findApplicableSplitRule(procedure.id, professional.id, input.splitRules)
+    if (rule) {
+      const split = applySplitDistribution(netValue, rule, input.ownerProfessionalId)
+      finalValueBruno = split.finalValueBruno
+      finalValueProfessional = split.finalValueProfessional
+      professionalShare = split.professionalShare
+    }
+    // No match or invalid rule → default 100% Bruno (already set)
+  } else if (!input.splitRules || input.splitRules.length === 0) {
+    // Fallback legado (hardcoded por nomes) — sem split_rules no banco
+    if (isEndolaser && isValquiria) {
+      professionalShare = 50
+      finalValueBruno = netValue * 0.5
+      finalValueProfessional = netValue * 0.5
+    } else if (isValquiria) {
+      professionalShare = 100
+      finalValueBruno = 0
+      finalValueProfessional = netValue
+    }
   }
+  // else: splitRules exist but ownerProfessionalId not provided → default 100% Bruno (safe)
 
   return {
     grossValue,
@@ -267,7 +379,6 @@ export function calculateAppointment(input: CalculationInput): CalculationResult
 export function calculateAppointmentMultiProcedure(input: MultiProcedureCalculationInput): CalculationResult {
   const {
     grossValue,
-    netValueInput,
     paymentMethodId,
     source,
     procedures,
@@ -351,17 +462,42 @@ export function calculateAppointmentMultiProcedure(input: MultiProcedureCalculat
   }
 
   // Step 4b: Apply professional split logic (always, regardless of bonus source)
-  if (hasEndolaser && isValquiria) {
-    professionalShare = 50
-    finalValueBruno = netValue * 0.5
-    finalValueProfessional = netValue * 0.5
-  } else if (isValquiria) {
-    professionalShare = 100
-    finalValueBruno = 0
-    finalValueProfessional = netValue
-  } else {
-    finalValueBruno = netValue
+  if (input.splitRules && input.splitRules.length > 0 && input.ownerProfessionalId) {
+    // Database-driven split rules: find best rule across all procedures
+    let bestRule: SplitRule | null = null
+    let bestSpecificity = -1
+
+    for (const proc of procedures) {
+      const rule = findApplicableSplitRule(proc.id, professional.id, input.splitRules)
+      if (rule) {
+        const spec = splitRuleSpecificity(rule)
+        if (spec > bestSpecificity || (spec === bestSpecificity && rule.priority > (bestRule?.priority ?? -1))) {
+          bestRule = rule
+          bestSpecificity = spec
+        }
+      }
+    }
+
+    if (bestRule) {
+      const split = applySplitDistribution(netValue, bestRule, input.ownerProfessionalId)
+      finalValueBruno = split.finalValueBruno
+      finalValueProfessional = split.finalValueProfessional
+      professionalShare = split.professionalShare
+    }
+    // No match or invalid rule → default 100% Bruno (already set)
+  } else if (!input.splitRules || input.splitRules.length === 0) {
+    // Fallback legado (hardcoded por nomes) — sem split_rules no banco
+    if (hasEndolaser && isValquiria) {
+      professionalShare = 50
+      finalValueBruno = netValue * 0.5
+      finalValueProfessional = netValue * 0.5
+    } else if (isValquiria) {
+      professionalShare = 100
+      finalValueBruno = 0
+      finalValueProfessional = netValue
+    }
   }
+  // else: splitRules exist but ownerProfessionalId not provided → default 100% Bruno (safe)
 
   return {
     grossValue,

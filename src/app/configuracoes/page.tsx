@@ -70,8 +70,8 @@ export default function ConfiguracoesPage() {
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<{
-    type: 'professional' | 'procedure' | 'payment_method' | 'card_fee_tier_rate' | 'bonus_rule'
-    data: Partial<Professional | Procedure | PaymentMethod | CardFeeTierRate | BonusRule>
+    type: 'professional' | 'procedure' | 'payment_method' | 'card_fee_tier_rate' | 'bonus_rule' | 'split_rule'
+    data: Partial<Professional | Procedure | PaymentMethod | CardFeeTierRate | BonusRule | SplitRule>
     isNew: boolean
   } | null>(null)
   const [deletingItem, setDeletingItem] = useState<{
@@ -135,6 +135,15 @@ export default function ConfiguracoesPage() {
           break
         case 'bonus_rule':
           tableName = 'bonus_rules'
+          // Remove joined data before saving
+          delete (saveData as Record<string, unknown>).procedure
+          delete (saveData as Record<string, unknown>).professional
+          break
+        case 'split_rule':
+          tableName = 'split_rules'
+          // Remove joined data before saving
+          delete (saveData as Record<string, unknown>).procedure
+          delete (saveData as Record<string, unknown>).professional
           break
       }
 
@@ -170,6 +179,9 @@ export default function ConfiguracoesPage() {
         case 'bonus_rule':
           refetchBonusRules()
           break
+        case 'split_rule':
+          refetchSplitRules()
+          break
       }
     } catch (error: unknown) {
       console.error('Error saving:', error)
@@ -202,6 +214,8 @@ export default function ConfiguracoesPage() {
       refetchProcedures()
       refetchPaymentMethods()
       refetchTierRates()
+      refetchSplitRules()
+      refetchBonusRules()
     } catch (error) {
       console.error('Error deleting:', error)
       toast.error('Erro ao excluir')
@@ -311,46 +325,121 @@ export default function ConfiguracoesPage() {
                       Configure como dividir os valores entre profissionais por procedimento
                     </CardDescription>
                   </div>
+                  <Button
+                    onClick={() => {
+                      setEditingItem({
+                        type: 'split_rule',
+                        data: {
+                          name: '',
+                          procedure_id: null,
+                          professional_id: null,
+                          distributions: [],
+                          deduct_procedure_cost: true,
+                          deduct_card_fee: true,
+                          deduct_tax: true,
+                          priority: 0,
+                          is_active: true,
+                        } as Partial<SplitRule>,
+                        isNew: true,
+                      })
+                      setEditDialogOpen(true)
+                    }}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Nova Regra de Divisão
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nome da Regra</TableHead>
-                      <TableHead>Procedimento</TableHead>
-                      <TableHead>Profissional</TableHead>
-                      <TableHead>Distribuição</TableHead>
-                      <TableHead>Prioridade</TableHead>
-                      <TableHead className="text-center">Ativo</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {splitRules.map((rule) => {
-                      const dists = (rule.distributions as SplitDistribution[]) || []
-                      const distStr = dists.map(d => {
-                        const prof = professionals.find(p => p.id === d.professional_id)
-                        return `${prof?.name || '?'}: ${d.percentage}%`
-                      }).join(', ')
+                {splitRules.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>Nenhuma regra de divisão configurada.</p>
+                    <p className="text-sm mt-2">
+                      Crie regras para definir como dividir valores entre profissionais
+                      (ex: Endolaser + Valquíria = 50/50).
+                    </p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nome da Regra</TableHead>
+                        <TableHead>Procedimento</TableHead>
+                        <TableHead>Profissional</TableHead>
+                        <TableHead>Distribuição</TableHead>
+                        <TableHead>Prioridade</TableHead>
+                        <TableHead className="text-center">Ativo</TableHead>
+                        <TableHead className="text-right">Ações</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {splitRules.map((rule) => {
+                        const dists = (rule.distributions as SplitDistribution[]) || []
+                        const distStr = dists.map(d => {
+                          const prof = professionals.find(p => p.id === d.professional_id)
+                          return `${prof?.name || '?'}: ${d.percentage}%`
+                        }).join(', ')
 
-                      return (
-                        <TableRow key={rule.id}>
-                          <TableCell className="font-medium">{rule.name}</TableCell>
-                          <TableCell>{rule.procedure?.name || 'Qualquer'}</TableCell>
-                          <TableCell>{rule.professional?.name || 'Qualquer'}</TableCell>
-                          <TableCell>{distStr}</TableCell>
-                          <TableCell>{rule.priority}</TableCell>
-                          <TableCell className="text-center">
-                            {rule.is_active ? 'Sim' : 'Não'}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-                <p className="text-sm text-muted-foreground mt-4">
-                  Para adicionar ou editar regras, use o script de configuração ou entre em contato com o suporte.
-                </p>
+                        return (
+                          <TableRow key={rule.id}>
+                            <TableCell className="font-medium">{rule.name}</TableCell>
+                            <TableCell>{rule.procedure?.name || <span className="text-muted-foreground">Qualquer</span>}</TableCell>
+                            <TableCell>{rule.professional?.name || <span className="text-muted-foreground">Qualquer</span>}</TableCell>
+                            <TableCell>{distStr}</TableCell>
+                            <TableCell>{rule.priority}</TableCell>
+                            <TableCell className="text-center">
+                              {rule.is_active ? (
+                                <span className="inline-block w-2 h-2 bg-green-500 rounded-full" />
+                              ) : (
+                                <span className="inline-block w-2 h-2 bg-gray-300 rounded-full" />
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  setEditingItem({
+                                    type: 'split_rule',
+                                    data: { ...rule },
+                                    isNew: false,
+                                  })
+                                  setEditDialogOpen(true)
+                                }}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive"
+                                onClick={() => {
+                                  setDeletingItem({
+                                    type: 'split_rules',
+                                    id: rule.id,
+                                    name: rule.name,
+                                  })
+                                  setDeleteDialogOpen(true)
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+                <div className="mt-6 p-4 bg-muted/50 rounded-lg">
+                  <h4 className="font-medium mb-2">Como funciona:</h4>
+                  <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                    <li><strong>Procedimento:</strong> Se definido, a regra só se aplica a esse procedimento</li>
+                    <li><strong>Profissional:</strong> Se definido, a regra só se aplica quando esse profissional realiza o atendimento</li>
+                    <li><strong>Distribuição:</strong> Define quanto cada profissional recebe (deve somar 100%)</li>
+                    <li><strong>Prioridade:</strong> Em caso de empate na especificidade, a regra com maior prioridade vence</li>
+                  </ul>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -896,6 +985,7 @@ export default function ConfiguracoesPage() {
               {editingItem?.type === 'payment_method' && 'Forma de Pagamento'}
               {editingItem?.type === 'card_fee_tier_rate' && 'Taxa de Cartão'}
               {editingItem?.type === 'bonus_rule' && 'Regra de Bônus'}
+              {editingItem?.type === 'split_rule' && 'Regra de Divisão'}
             </DialogTitle>
           </DialogHeader>
 
@@ -1226,6 +1316,193 @@ export default function ConfiguracoesPage() {
                   <div className="flex items-center gap-2">
                     <Switch
                       checked={(editingItem.data as Partial<BonusRule>).is_active ?? true}
+                      onCheckedChange={(checked) =>
+                        setEditingItem({
+                          ...editingItem,
+                          data: { ...editingItem.data, is_active: checked },
+                        })
+                      }
+                    />
+                    <Label>Regra ativa</Label>
+                  </div>
+                </>
+              )}
+
+              {/* Split Rule Form */}
+              {editingItem.type === 'split_rule' && (
+                <>
+                  <div className="space-y-2">
+                    <Label>Nome da Regra</Label>
+                    <Input
+                      value={(editingItem.data as Partial<SplitRule>).name || ''}
+                      onChange={(e) =>
+                        setEditingItem({
+                          ...editingItem,
+                          data: { ...editingItem.data, name: e.target.value },
+                        })
+                      }
+                      placeholder="Ex: Endolaser - Valquíria (50/50)"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Procedimento (condição)</Label>
+                      <select
+                        className="w-full h-10 px-3 border rounded-md bg-background"
+                        value={(editingItem.data as Partial<SplitRule>).procedure_id || ''}
+                        onChange={(e) =>
+                          setEditingItem({
+                            ...editingItem,
+                            data: {
+                              ...editingItem.data,
+                              procedure_id: e.target.value || null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">Qualquer procedimento</option>
+                        {procedures.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Profissional (condição)</Label>
+                      <select
+                        className="w-full h-10 px-3 border rounded-md bg-background"
+                        value={(editingItem.data as Partial<SplitRule>).professional_id || ''}
+                        onChange={(e) =>
+                          setEditingItem({
+                            ...editingItem,
+                            data: {
+                              ...editingItem.data,
+                              professional_id: e.target.value || null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">Qualquer profissional</option>
+                        {professionals.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Prioridade</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={(editingItem.data as Partial<SplitRule>).priority || 0}
+                      onChange={(e) =>
+                        setEditingItem({
+                          ...editingItem,
+                          data: {
+                            ...editingItem.data,
+                            priority: parseInt(e.target.value) || 0,
+                          },
+                        })
+                      }
+                      className="max-w-[120px]"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Em caso de empate na especificidade, a regra com maior prioridade vence
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label>Distribuição</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const dists = [...((editingItem.data as Partial<SplitRule>).distributions || [])]
+                          dists.push({ professional_id: '', percentage: 0 })
+                          setEditingItem({
+                            ...editingItem,
+                            data: { ...editingItem.data, distributions: dists },
+                          })
+                        }}
+                      >
+                        <Plus className="mr-1 h-3 w-3" />
+                        Adicionar
+                      </Button>
+                    </div>
+                    {((editingItem.data as Partial<SplitRule>).distributions || []).map((dist, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <select
+                          className="flex-1 h-10 px-3 border rounded-md bg-background"
+                          value={dist.professional_id}
+                          onChange={(e) => {
+                            const dists = [...((editingItem.data as Partial<SplitRule>).distributions || [])]
+                            dists[idx] = { ...dists[idx], professional_id: e.target.value }
+                            setEditingItem({
+                              ...editingItem,
+                              data: { ...editingItem.data, distributions: dists },
+                            })
+                          }}
+                        >
+                          <option value="">Selecione...</option>
+                          {professionals.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={dist.percentage}
+                          onChange={(e) => {
+                            const dists = [...((editingItem.data as Partial<SplitRule>).distributions || [])]
+                            dists[idx] = { ...dists[idx], percentage: parseFloat(e.target.value) || 0 }
+                            setEditingItem({
+                              ...editingItem,
+                              data: { ...editingItem.data, distributions: dists },
+                            })
+                          }}
+                          className="w-[100px]"
+                          placeholder="%"
+                        />
+                        <span className="text-sm text-muted-foreground">%</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive"
+                          onClick={() => {
+                            const dists = [...((editingItem.data as Partial<SplitRule>).distributions || [])]
+                            dists.splice(idx, 1)
+                            setEditingItem({
+                              ...editingItem,
+                              data: { ...editingItem.data, distributions: dists },
+                            })
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                    {(() => {
+                      const dists = (editingItem.data as Partial<SplitRule>).distributions || []
+                      const total = dists.reduce((sum, d) => sum + d.percentage, 0)
+                      return (
+                        <p className={`text-sm ${Math.abs(total - 100) < 0.01 ? 'text-green-600' : 'text-destructive'}`}>
+                          Total: {total.toFixed(1)}% {Math.abs(total - 100) < 0.01 ? '(OK)' : '(deve somar 100%)'}
+                        </p>
+                      )
+                    })()}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={(editingItem.data as Partial<SplitRule>).is_active ?? true}
                       onCheckedChange={(checked) =>
                         setEditingItem({
                           ...editingItem,

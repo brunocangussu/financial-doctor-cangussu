@@ -43,8 +43,8 @@ import {
 } from '@/components/ui/collapsible'
 import { Separator } from '@/components/ui/separator'
 import { createClient } from '@/lib/supabase/client'
-import { formatCurrency, calculateAppointment } from '@/lib/calculations'
-import { useProfessionals, useUserProfile, useProcedures, usePaymentMethods, useCurrentTierCardFeeRules, useSystemSettings, useExpenses } from '@/lib/hooks'
+import { formatCurrency, calculateAppointment, findApplicableSplitRule, applySplitDistribution, calculateBonusFromRules, determineOwnerProfessionalId } from '@/lib/calculations'
+import { useProfessionals, useUserProfile, useProcedures, usePaymentMethods, useCurrentTierCardFeeRules, useSystemSettings, useExpenses, useSplitRules, useBonusRules } from '@/lib/hooks'
 import { calculateProfessionalExpenses } from '@/lib/expenses'
 import type { ProfessionalExpenses } from '@/types'
 import { Input } from '@/components/ui/input'
@@ -62,6 +62,17 @@ export default function RepassesPage() {
   const { data: systemSettings } = useSystemSettings()
   const { isAdmin } = useUserProfile()
   const { data: expenses } = useExpenses(true) // Apenas despesas ativas
+  const { data: splitRules } = useSplitRules()
+  const { data: bonusRules } = useBonusRules()
+
+  // Determine owner professional ID for correct split attribution
+  const ownerProfessionalId = useMemo(
+    () => determineOwnerProfessionalId(professionals, systemSettings),
+    [professionals, systemSettings]
+  )
+
+  // Dynamic owner name from database
+  const ownerName = professionals.find(p => p.id === ownerProfessionalId)?.name || 'Bruno'
 
   // Date range state - default to current month
   const [startDate, setStartDate] = useState<Date>(startOfMonth(new Date()))
@@ -259,8 +270,8 @@ export default function RepassesPage() {
   const professionalTotals = professionals.reduce<
     Record<string, { name: string; total: number; appointments: Appointment[]; field: string; expenses: ProfessionalExpenses; netAfterExpenses: number }>
   >((acc, prof) => {
-    // Verificar se é Bruno (pelo nome) - ele recebe de final_value_bruno de TODOS os atendimentos
-    const isBruno = prof.name.toLowerCase() === 'bruno'
+    // Verificar se é o dono (pelo ID) - ele recebe de final_value_bruno de TODOS os atendimentos
+    const isBruno = prof.id === ownerProfessionalId
     const profExpenses = professionalExpenses[prof.id] || { total: 0, details: [] }
 
     if (isBruno) {
@@ -356,7 +367,7 @@ export default function RepassesPage() {
       const profTotals = professionals.reduce<
         Record<string, { name: string; total: number; appointments: Appointment[]; field: string; expenses: ProfessionalExpenses; netAfterExpenses: number }>
       >((acc, prof) => {
-        const isBruno = prof.name.toLowerCase() === 'bruno'
+        const isBruno = prof.id === ownerProfessionalId
         const profExp = monthExpenses[prof.id] || { total: 0, details: [] }
 
         if (isBruno) {
@@ -610,23 +621,81 @@ export default function RepassesPage() {
         cardFeeRules,
         defaultTaxPercentage,
         vanessaBonusPercentage,
+        bonusRules: bonusRules.filter(r => r.is_active),
+        splitRules: splitRules.filter(r => r.is_active),
+        ownerProfessionalId,
       })
 
-      // If using manual net value, override calculation
+      // If using manual net value, override calculation with recalculated split/bonus
       let finalCalculation = { ...calculation }
       if (editUseManualNet && manualNetValueNum) {
         const totalProcedureCost = selectedProcedure.fixed_cost
         const valueAfterProcedure = manualNetValueNum + totalProcedureCost
-        const taxRate = defaultTaxPercentage / 100
-        const valueAfterCardFee = valueAfterProcedure / (1 - taxRate)
+        const taxRate = (editIsHospital ? 0 : defaultTaxPercentage) / 100
+        const valueAfterCardFee = taxRate > 0
+          ? valueAfterProcedure / (1 - taxRate)
+          : valueAfterProcedure
         const customCardFeeValue = grossValueNum - valueAfterCardFee
-        const customCardFeePercentage = (customCardFeeValue / grossValueNum) * 100
+        const customCardFeePercentage = grossValueNum > 0 ? (customCardFeeValue / grossValueNum) * 100 : 0
+        const taxValue = taxRate > 0 ? valueAfterCardFee * taxRate : 0
+
+        // Recalculate bonus
+        let vanessaBonus = 0
+        const activeBonusRules = bonusRules.filter(r => r.is_active)
+        if (activeBonusRules.length > 0) {
+          const { totalBonus } = calculateBonusFromRules(
+            grossValueNum, manualNetValueNum, manualNetValueNum,
+            selectedProcedure.id, selectedProfessional.id, activeBonusRules
+          )
+          vanessaBonus = totalBonus
+        } else {
+          const isEndolaser = selectedProcedure.name.toLowerCase().includes('endolaser')
+          const isValquiria = selectedProfessional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+          if (isEndolaser && !isValquiria && selectedProcedure.has_vanessa_bonus) {
+            vanessaBonus = manualNetValueNum * (vanessaBonusPercentage / 100)
+          }
+        }
+
+        // Recalculate split
+        let finalValueBruno = manualNetValueNum
+        let finalValueProfessional = 0
+        let professionalShare = 0
+        const activeSplitRules = splitRules.filter(r => r.is_active)
+        if (activeSplitRules.length > 0 && ownerProfessionalId) {
+          const rule = findApplicableSplitRule(selectedProcedure.id, selectedProfessional.id, activeSplitRules)
+          if (rule) {
+            const split = applySplitDistribution(manualNetValueNum, rule, ownerProfessionalId)
+            finalValueBruno = split.finalValueBruno
+            finalValueProfessional = split.finalValueProfessional
+            professionalShare = split.professionalShare
+          }
+        } else {
+          const isEndolaser = selectedProcedure.name.toLowerCase().includes('endolaser')
+          const isValquiria = selectedProfessional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+          if (isEndolaser && isValquiria) {
+            professionalShare = 50
+            finalValueBruno = manualNetValueNum * 0.5
+            finalValueProfessional = manualNetValueNum * 0.5
+          } else if (isValquiria) {
+            professionalShare = 100
+            finalValueBruno = 0
+            finalValueProfessional = manualNetValueNum
+          }
+        }
 
         finalCalculation = {
           ...finalCalculation,
-          cardFeePercentage: customCardFeePercentage,
-          cardFeeValue: customCardFeeValue,
+          cardFeePercentage: Math.max(0, customCardFeePercentage),
+          cardFeeValue: Math.max(0, customCardFeeValue),
+          valueAfterCardFee,
+          taxPercentage: editIsHospital ? 0 : defaultTaxPercentage,
+          taxValue,
+          valueAfterTax: valueAfterProcedure,
           netValue: manualNetValueNum,
+          vanessaBonus,
+          professionalShare,
+          finalValueBruno,
+          finalValueProfessional,
         }
       }
 
@@ -699,7 +768,7 @@ export default function RepassesPage() {
       data = vanessaAppointments.map((a) => ({
         Data: format(new Date(a.date), 'dd/MM/yyyy'),
         Paciente: a.patient_name,
-        Procedimento: 'Endolaser (Bruno)',
+        Procedimento: `Endolaser (${ownerName})`,
         'Valor Líquido': a.net_value,
         'Bônus (1,5%)': a.vanessa_bonus,
       }))
@@ -1111,7 +1180,7 @@ export default function RepassesPage() {
                           <div>
                             <CardTitle className="text-lg font-semibold" style={{ color: '#00A87D' }}>Bônus Vanessa</CardTitle>
                             <CardDescription style={{ color: 'rgba(0, 168, 125, 0.7)' }}>
-                              1,5% sobre atendimentos de Endolaser do Bruno
+                              1,5% sobre atendimentos de Endolaser do {ownerName}
                             </CardDescription>
                           </div>
                           <div className="flex items-center gap-2">
@@ -1157,7 +1226,7 @@ export default function RepassesPage() {
                                   <TableRow key={a.id}>
                                     <TableCell>{format(new Date(a.date), 'dd/MM/yyyy')}</TableCell>
                                     <TableCell>{a.patient_name}</TableCell>
-                                    <TableCell>Endolaser (Bruno)</TableCell>
+                                    <TableCell>Endolaser ({ownerName})</TableCell>
                                     <TableCell className="text-right">{formatCurrency(a.net_value)}</TableCell>
                                     <TableCell className="text-right font-medium">{formatCurrency(a.vanessa_bonus)}</TableCell>
                                     <TableCell>
@@ -1355,7 +1424,7 @@ export default function RepassesPage() {
               {(selectedAppointment.final_value_bruno > 0 && selectedAppointment.final_value_professional > 0) && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-sm text-muted-foreground">Valor Bruno</p>
+                    <p className="text-sm text-muted-foreground">Valor {ownerName}</p>
                     <p className="font-medium">{formatCurrency(selectedAppointment.final_value_bruno)}</p>
                   </div>
                   <div>

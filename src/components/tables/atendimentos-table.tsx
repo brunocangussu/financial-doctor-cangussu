@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Download, Search, Trash2, Eye, Pencil, ArrowUpDown } from 'lucide-react'
@@ -46,8 +46,10 @@ import {
   usePaymentMethods,
   useCurrentTierCardFeeRules,
   useSystemSettings,
+  useSplitRules,
+  useBonusRules,
 } from '@/lib/hooks'
-import { formatCurrency, calculateAppointment } from '@/lib/calculations'
+import { formatCurrency, calculateAppointment, findApplicableSplitRule, applySplitDistribution, calculateBonusFromRules, determineOwnerProfessionalId } from '@/lib/calculations'
 import type { Appointment } from '@/types'
 
 export function AtendimentosTable() {
@@ -91,6 +93,20 @@ export function AtendimentosTable() {
   const { data: paymentMethods } = usePaymentMethods()
   const { data: cardFeeRules } = useCurrentTierCardFeeRules()
   const { data: systemSettings } = useSystemSettings()
+  const { data: splitRules } = useSplitRules()
+  const { data: bonusRules } = useBonusRules()
+
+  // Determine owner professional ID for correct split attribution
+  const ownerProfessionalId = useMemo(
+    () => determineOwnerProfessionalId(professionals, systemSettings),
+    [professionals, systemSettings]
+  )
+
+  // Dynamic professional names from database
+  const ownerName = professionals.find(p => p.id === ownerProfessionalId)?.name || 'Bruno'
+  const otherProfessionals = professionals.filter(p => p.id !== ownerProfessionalId && p.is_active)
+  const otherName = otherProfessionals.length === 1 ? otherProfessionals[0].name : 'Profissionais'
+
   const { data: appointments, loading, refetch } = useAppointments({
     startDate: startDate ? format(startDate, 'yyyy-MM-dd') : undefined,
     endDate: endDate ? format(endDate, 'yyyy-MM-dd') : undefined,
@@ -188,29 +204,51 @@ export function AtendimentosTable() {
         const cardFeePercentage = ((grossValueNum - valueAfterTax) / grossValueNum) * 100
         const cardFeeValue = grossValueNum - valueAfterTax
 
-        // Calcular divisoes de profissionais
-        const isEndolaser = selectedProcedure.name.toLowerCase().includes('endolaser')
-        const isValquiria = selectedProfessional.name.toLowerCase().includes('valquiria')
-
+        // Calcular bonus
         let vanessaBonus = 0
         let finalValueBruno = netValueNum
         let finalValueProfessional = 0
         let professionalShare = 0
 
-        if (isEndolaser) {
-          if (isValquiria) {
+        const activeBonusRules = bonusRules.filter(r => r.is_active)
+        if (activeBonusRules.length > 0) {
+          const { totalBonus } = calculateBonusFromRules(
+            grossValueNum, netValueNum, netValueNum,
+            selectedProcedure.id, selectedProfessional.id, activeBonusRules
+          )
+          vanessaBonus = totalBonus
+        } else {
+          // Legacy bonus
+          const isEndolaser = selectedProcedure.name.toLowerCase().includes('endolaser')
+          const isValquiria = selectedProfessional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+          if (isEndolaser && !isValquiria && selectedProcedure.has_vanessa_bonus) {
+            vanessaBonus = netValueNum * (vanessaBonusPercentage / 100)
+          }
+        }
+
+        // Calcular divisão de profissionais
+        const activeSplitRules = splitRules.filter(r => r.is_active)
+        if (activeSplitRules.length > 0 && ownerProfessionalId) {
+          const rule = findApplicableSplitRule(selectedProcedure.id, selectedProfessional.id, activeSplitRules)
+          if (rule) {
+            const split = applySplitDistribution(netValueNum, rule, ownerProfessionalId)
+            finalValueBruno = split.finalValueBruno
+            finalValueProfessional = split.finalValueProfessional
+            professionalShare = split.professionalShare
+          }
+        } else {
+          // Fallback legado
+          const isEndolaser = selectedProcedure.name.toLowerCase().includes('endolaser')
+          const isValquiria = selectedProfessional.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('valquiria')
+          if (isEndolaser && isValquiria) {
             professionalShare = 50
             finalValueBruno = netValueNum * 0.5
             finalValueProfessional = netValueNum * 0.5
-          } else {
-            if (selectedProcedure.has_vanessa_bonus) {
-              vanessaBonus = netValueNum * (vanessaBonusPercentage / 100)
-            }
+          } else if (isValquiria) {
+            professionalShare = 100
+            finalValueBruno = 0
+            finalValueProfessional = netValueNum
           }
-        } else if (isValquiria) {
-          professionalShare = 100
-          finalValueBruno = 0
-          finalValueProfessional = netValueNum
         }
 
         updateData = {
@@ -246,6 +284,9 @@ export function AtendimentosTable() {
           cardFeeRules,
           defaultTaxPercentage,
           vanessaBonusPercentage,
+          bonusRules: bonusRules.filter(r => r.is_active),
+          splitRules: splitRules.filter(r => r.is_active),
+          ownerProfessionalId,
         })
 
         updateData = {
@@ -351,8 +392,8 @@ export function AtendimentosTable() {
       'Custo Procedimento': a.procedure_cost,
       'Valor Líquido': a.net_value,
       'Bônus Vanessa': a.vanessa_bonus,
-      'Valor Bruno': a.final_value_bruno,
-      'Valor Profissional': a.final_value_professional,
+      [`Valor ${ownerName}`]: a.final_value_bruno,
+      [`Valor ${otherName}`]: a.final_value_professional,
     }))
 
     const ws = XLSX.utils.json_to_sheet(data)
@@ -505,14 +546,14 @@ export function AtendimentosTable() {
         {/* Valor Bruno - Blue */}
         <Card className="border-0 shadow-sm rounded-xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(74, 144, 226, 0.1) 0%, rgba(74, 144, 226, 0.18) 100%)' }}>
           <CardContent className="p-4">
-            <div className="text-xs font-medium uppercase tracking-wide" style={{ color: '#3A7BC8' }}>Valor Bruno</div>
+            <div className="text-xs font-medium uppercase tracking-wide" style={{ color: '#3A7BC8' }}>Valor {ownerName}</div>
             <div className="text-xl font-bold mt-1" style={{ color: '#4A90E2' }}>{formatCurrency(totals.bruno)}</div>
           </CardContent>
         </Card>
         {/* Valor Valquiria - Purple/Magenta */}
         <Card className="border-0 shadow-sm rounded-xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(206, 48, 249, 0.1) 0%, rgba(86, 19, 138, 0.15) 100%)' }}>
           <CardContent className="p-4">
-            <div className="text-xs font-medium uppercase tracking-wide" style={{ color: '#56138A' }}>Valor Valquiria</div>
+            <div className="text-xs font-medium uppercase tracking-wide" style={{ color: '#56138A' }}>Valor {otherName}</div>
             <div className="text-xl font-bold mt-1" style={{ color: '#CE30F9' }}>{formatCurrency(totals.professional)}</div>
           </CardContent>
         </Card>
@@ -726,7 +767,7 @@ export function AtendimentosTable() {
                 {(selectedAppointment.final_value_bruno > 0 && selectedAppointment.final_value_professional > 0) && (
                   <>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Valor Bruno:</span>
+                      <span className="text-muted-foreground">Valor {ownerName}:</span>
                       <span>{formatCurrency(selectedAppointment.final_value_bruno)}</span>
                     </div>
                     <div className="flex justify-between">

@@ -78,6 +78,7 @@ interface MonthlyTrendChartProps {
 
 interface RevenueByProfessionalChartProps {
   data: ChartDataItem[]
+  ownerName?: string
 }
 
 export function RevenueBySourceChart({ data }: RevenueBySourceChartProps) {
@@ -478,7 +479,7 @@ export function MonthlyTrendChart({ data, brunoName = 'Bruno', otherProfessional
   )
 }
 
-export function RevenueByProfessionalChart({ data }: RevenueByProfessionalChartProps) {
+export function RevenueByProfessionalChart({ data, ownerName = 'Bruno' }: RevenueByProfessionalChartProps) {
   if (data.length === 0) {
     return (
       <Card className="border-0 shadow-sm bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-800 rounded-xl">
@@ -498,7 +499,7 @@ export function RevenueByProfessionalChart({ data }: RevenueByProfessionalChartP
   // Add colors to data
   const coloredData = data.map((item, index) => ({
     ...item,
-    fill: item.name.toLowerCase().includes('bruno') ? BRAND_COLORS.blue : BRAND_COLORS.magenta,
+    fill: item.name === ownerName ? BRAND_COLORS.blue : BRAND_COLORS.magenta,
   }))
 
   return (
@@ -530,7 +531,7 @@ export function RevenueByProfessionalChart({ data }: RevenueByProfessionalChartP
               />
               <Bar dataKey="value" radius={[8, 8, 0, 0]}>
                 {coloredData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.name.toLowerCase().includes('bruno') ? 'url(#brunoGradient)' : 'url(#valquiriaGradient)'} />
+                  <Cell key={`cell-${index}`} fill={entry.name === ownerName ? 'url(#brunoGradient)' : 'url(#valquiriaGradient)'} />
                 ))}
               </Bar>
             </BarChart>

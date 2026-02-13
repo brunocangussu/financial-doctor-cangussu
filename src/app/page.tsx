@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 
@@ -15,13 +15,20 @@ import { Button } from '@/components/ui/button'
 import { DatePickerInput } from '@/components/ui/date-picker-input'
 import { Card, CardContent } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/client'
-import { formatCurrency } from '@/lib/calculations'
-import { useProfessionals } from '@/lib/hooks'
+import { formatCurrency, determineOwnerProfessionalId } from '@/lib/calculations'
+import { useProfessionals, useSystemSettings } from '@/lib/hooks'
 import type { Appointment } from '@/types'
 
 export default function DashboardPage() {
   const supabase = createClient()
   const { data: professionals } = useProfessionals()
+  const { data: systemSettings } = useSystemSettings()
+
+  // Determine owner professional ID
+  const ownerProfessionalId = useMemo(
+    () => determineOwnerProfessionalId(professionals, systemSettings),
+    [professionals, systemSettings]
+  )
 
   // Date range state - default to current month
   const [startDate, setStartDate] = useState<Date>(startOfMonth(new Date()))
@@ -133,11 +140,11 @@ export default function DashboardPage() {
   const totalValquiria = appointments.reduce((sum, a) => sum + (a.final_value_professional || 0), 0)
   const totalVanessa = appointments.reduce((sum, a) => sum + (a.vanessa_bonus || 0), 0)
 
-  // Get professional names from database
-  const brunoProfessional = professionals.find(p => p.name.toLowerCase() === 'bruno')
-  const otherProfessional = professionals.find(p => p.name.toLowerCase() !== 'bruno')
-  const brunoName = brunoProfessional?.name || 'Bruno'
-  const otherProfessionalName = otherProfessional?.name || 'Profissional'
+  // Get professional names from database using ownerProfessionalId
+  const ownerProf = professionals.find(p => p.id === ownerProfessionalId)
+  const otherProfessionals = professionals.filter(p => p.id !== ownerProfessionalId && p.is_active)
+  const brunoName = ownerProf?.name || 'Bruno'
+  const otherProfessionalName = otherProfessionals.length === 1 ? otherProfessionals[0].name : 'Profissionais'
 
   // Calculate revenue by procedure
   const revenueByProcedure = appointments.reduce<Record<string, number>>(
@@ -289,7 +296,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <RevenueByProfessionalChart data={professionalChartData} />
+              <RevenueByProfessionalChart data={professionalChartData} ownerName={brunoName} />
               <RevenueByProcedureChart data={procedureChartData} />
             </div>
 
