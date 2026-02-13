@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { format, startOfMonth, endOfMonth, subDays, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Download, Search, Trash2, Eye, Pencil, ArrowUpDown } from 'lucide-react'
 import { toast } from 'sonner'
@@ -57,6 +57,7 @@ export function AtendimentosTable() {
   const { isAdmin } = useUserProfile()
 
   // Filter state - default to current month
+  const [datePreset, setDatePreset] = useState<string>('current_month')
   const [startDate, setStartDate] = useState<Date | undefined>(startOfMonth(new Date()))
   const [endDate, setEndDate] = useState<Date | undefined>(endOfMonth(new Date()))
   const [professionalId, setProfessionalId] = useState<string>('')
@@ -405,9 +406,30 @@ export function AtendimentosTable() {
     toast.success('Arquivo exportado com sucesso')
   }
 
+  const applyDatePreset = (preset: string) => {
+    setDatePreset(preset)
+    const today = new Date()
+    switch (preset) {
+      case 'current_month':
+        setStartDate(startOfMonth(today)); setEndDate(endOfMonth(today)); break
+      case 'last_month': {
+        const lm = subMonths(today, 1)
+        setStartDate(startOfMonth(lm)); setEndDate(endOfMonth(lm)); break
+      }
+      case '7d': setStartDate(subDays(today, 6)); setEndDate(today); break
+      case '15d': setStartDate(subDays(today, 14)); setEndDate(today); break
+      case '30d': setStartDate(subDays(today, 29)); setEndDate(today); break
+      case '60d': setStartDate(subDays(today, 59)); setEndDate(today); break
+      case '90d': setStartDate(subDays(today, 89)); setEndDate(today); break
+      case '6m': setStartDate(startOfMonth(subMonths(today, 5))); setEndDate(endOfMonth(today)); break
+      case '1y': setStartDate(startOfMonth(subMonths(today, 11))); setEndDate(endOfMonth(today)); break
+    }
+  }
+
   const clearFilters = () => {
-    setStartDate(undefined)
-    setEndDate(undefined)
+    setDatePreset('current_month')
+    setStartDate(startOfMonth(new Date()))
+    setEndDate(endOfMonth(new Date()))
     setProfessionalId('')
     setProcedureId('')
     setPatientName('')
@@ -434,13 +456,34 @@ export function AtendimentosTable() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {/* Row 1: Dates, Professional, Procedure */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Row 1: Period, Dates, Professional, Procedure */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-slate-500">Período</Label>
+                <Select value={datePreset} onValueChange={applyDatePreset}>
+                  <SelectTrigger className="h-10 rounded-lg border-slate-200 hover:border-violet-300 transition-colors">
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="current_month">Este Mês</SelectItem>
+                    <SelectItem value="last_month">Mês Anterior</SelectItem>
+                    <SelectItem value="7d">Últimos 7 dias</SelectItem>
+                    <SelectItem value="15d">Últimos 15 dias</SelectItem>
+                    <SelectItem value="30d">Últimos 30 dias</SelectItem>
+                    <SelectItem value="60d">Últimos 60 dias</SelectItem>
+                    <SelectItem value="90d">Últimos 90 dias</SelectItem>
+                    <SelectItem value="6m">Últimos 6 meses</SelectItem>
+                    <SelectItem value="1y">Último ano</SelectItem>
+                    <SelectItem value="custom" disabled>Personalizado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="space-y-2">
                 <Label className="text-xs font-medium text-slate-500">Data Inicial</Label>
                 <DatePickerInput
                   value={startDate}
-                  onChange={setStartDate}
+                  onChange={(d) => { setStartDate(d); setDatePreset('custom') }}
                   placeholder="Selecione"
                 />
               </div>
@@ -449,7 +492,7 @@ export function AtendimentosTable() {
                 <Label className="text-xs font-medium text-slate-500">Data Final</Label>
                 <DatePickerInput
                   value={endDate}
-                  onChange={setEndDate}
+                  onChange={(d) => { setEndDate(d); setDatePreset('custom') }}
                   placeholder="Selecione"
                 />
               </div>

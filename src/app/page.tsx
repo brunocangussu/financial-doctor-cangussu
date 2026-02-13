@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns'
+import { format, startOfMonth, endOfMonth, subMonths, subDays } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 
 import { AppLayout } from '@/components/app-layout'
@@ -11,9 +11,15 @@ import {
   MonthlyTrendChart,
   RevenueByProfessionalChart,
 } from '@/components/dashboard/charts'
-import { Button } from '@/components/ui/button'
 import { DatePickerInput } from '@/components/ui/date-picker-input'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, determineOwnerProfessionalId } from '@/lib/calculations'
 import { useProfessionals, useSystemSettings } from '@/lib/hooks'
@@ -31,6 +37,7 @@ export default function DashboardPage() {
   )
 
   // Date range state - default to current month
+  const [datePreset, setDatePreset] = useState<string>('current_month')
   const [startDate, setStartDate] = useState<Date>(startOfMonth(new Date()))
   const [endDate, setEndDate] = useState<Date>(endOfMonth(new Date()))
 
@@ -165,21 +172,25 @@ export default function DashboardPage() {
     { name: otherProfessionalName, value: totalValquiria },
   ].filter(p => p.value > 0)
 
-  // Preset buttons
-  const setCurrentMonth = () => {
-    setStartDate(startOfMonth(new Date()))
-    setEndDate(endOfMonth(new Date()))
-  }
-
-  const setLastMonth = () => {
-    const lastMonth = subMonths(new Date(), 1)
-    setStartDate(startOfMonth(lastMonth))
-    setEndDate(endOfMonth(lastMonth))
-  }
-
-  const setLast3Months = () => {
-    setStartDate(startOfMonth(subMonths(new Date(), 2)))
-    setEndDate(endOfMonth(new Date()))
+  // Date presets
+  const applyDatePreset = (preset: string) => {
+    setDatePreset(preset)
+    const today = new Date()
+    switch (preset) {
+      case 'current_month':
+        setStartDate(startOfMonth(today)); setEndDate(endOfMonth(today)); break
+      case 'last_month': {
+        const lm = subMonths(today, 1)
+        setStartDate(startOfMonth(lm)); setEndDate(endOfMonth(lm)); break
+      }
+      case '7d': setStartDate(subDays(today, 6)); setEndDate(today); break
+      case '15d': setStartDate(subDays(today, 14)); setEndDate(today); break
+      case '30d': setStartDate(subDays(today, 29)); setEndDate(today); break
+      case '60d': setStartDate(subDays(today, 59)); setEndDate(today); break
+      case '90d': setStartDate(subDays(today, 89)); setEndDate(today); break
+      case '6m': setStartDate(startOfMonth(subMonths(today, 5))); setEndDate(endOfMonth(today)); break
+      case '1y': setStartDate(startOfMonth(subMonths(today, 11))); setEndDate(endOfMonth(today)); break
+    }
   }
 
   return (
@@ -189,26 +200,34 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold">Dashboard Financeiro</h1>
 
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={setCurrentMonth}>
-              Este Mês
-            </Button>
-            <Button variant="outline" size="sm" onClick={setLastMonth}>
-              Mês Anterior
-            </Button>
-            <Button variant="outline" size="sm" onClick={setLast3Months}>
-              Últimos 3 Meses
-            </Button>
+            <Select value={datePreset} onValueChange={applyDatePreset}>
+              <SelectTrigger className="w-[180px] h-9">
+                <SelectValue placeholder="Período" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="current_month">Este Mês</SelectItem>
+                <SelectItem value="last_month">Mês Anterior</SelectItem>
+                <SelectItem value="7d">Últimos 7 dias</SelectItem>
+                <SelectItem value="15d">Últimos 15 dias</SelectItem>
+                <SelectItem value="30d">Últimos 30 dias</SelectItem>
+                <SelectItem value="60d">Últimos 60 dias</SelectItem>
+                <SelectItem value="90d">Últimos 90 dias</SelectItem>
+                <SelectItem value="6m">Últimos 6 meses</SelectItem>
+                <SelectItem value="1y">Último ano</SelectItem>
+                <SelectItem value="custom" disabled>Personalizado</SelectItem>
+              </SelectContent>
+            </Select>
 
-            <div className="flex items-center gap-2 ml-4">
+            <div className="flex items-center gap-2 ml-2">
               <DatePickerInput
                 value={startDate}
-                onChange={(d) => d && setStartDate(d)}
+                onChange={(d) => { if (d) { setStartDate(d); setDatePreset('custom') } }}
                 placeholder="Início"
               />
               <span className="text-muted-foreground">até</span>
               <DatePickerInput
                 value={endDate}
-                onChange={(d) => d && setEndDate(d)}
+                onChange={(d) => { if (d) { setEndDate(d); setDatePreset('custom') } }}
                 placeholder="Fim"
               />
             </div>
